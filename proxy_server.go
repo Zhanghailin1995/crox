@@ -16,26 +16,53 @@ var EmptyBuf = make([]byte, 0)
 
 // ProxyChannelContext cmdChannel和transferChannel共用同一个ChannelContext类型，因为他们都是连接同一个server的相同端口，只是传输的数据不一样
 type ProxyChannelContext struct {
-	channelType  int // 0: cmdChannel, 1: transferChannel
-	conn         gnet.Conn
-	lastReadTime int64
-	heartbeatSeq uint64
-	clientId     string
-	userChannels sync.Map  // cmdChannel 的属性
-	userId       uint64    // transferChannel 的属性
-	nextConn     gnet.Conn // transferChannel 的属性
+	channelType       int // 0: cmdChannel, 1: transferChannel
+	conn              gnet.Conn
+	lastReadTime      int64
+	heartbeatSeq      uint64
+	clientId          string
+	userChannelCtxMap sync.Map            // cmdChannel 的属性
+	userId            uint64              // transferChannel 的属性
+	nextChannelCtx    *UserChannelContext // transferChannel 的属性
+	mu                sync.RWMutex
+}
+
+func (ctx *ProxyChannelContext) SetNextChannelCtx(nextChannelCtx *UserChannelContext) {
+	ctx.mu.Lock()
+	ctx.nextChannelCtx = nextChannelCtx
+	ctx.mu.Unlock()
+}
+
+func (ctx *ProxyChannelContext) GetNextChannelCtx() *UserChannelContext {
+	ctx.mu.RLock()
+	nextChannelCtx := ctx.nextChannelCtx
+	ctx.mu.RUnlock()
+	return nextChannelCtx
+}
+
+func (ctx *ProxyChannelContext) SetConn(conn gnet.Conn) {
+	ctx.mu.Lock()
+	ctx.conn = conn
+	ctx.mu.Unlock()
+}
+
+func (ctx *ProxyChannelContext) GetConn() gnet.Conn {
+	ctx.mu.RLock()
+	conn := ctx.conn
+	ctx.mu.RUnlock()
+	return conn
 }
 
 // ProxyServer 需要接受ProxyClient的连接，还需要接受外来需要转发的连接
 type ProxyServer struct {
 	gnet.BuiltinEventEngine
-	eng               gnet.Engine
-	network           string
-	addr              string
-	connected         int32
-	portCmdChannelMap sync.Map
-	cmdChannels       sync.Map
-	cfg               *ProxyConfig
+	eng                  gnet.Engine
+	network              string
+	addr                 string
+	connected            int32
+	portCmdChannelCtxMap sync.Map
+	cmdChannelCtxMap     sync.Map
+	cfg                  *ProxyConfig
 }
 
 func (s *ProxyServer) Start(cancelFunc context.CancelFunc) {
@@ -82,27 +109,27 @@ func (s *ProxyServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 		}
 		switch pkt.Type {
 		case PktTypeAuth:
-			action = s.handleAuthMsg(ctx, pkt)
+			action = s.handleAuthMsg(c, ctx, pkt)
 			if action != gnet.None {
 				return
 			}
 		case PktTypeConnect:
-			action = s.handleConnectMsg(ctx, pkt)
+			action = s.handleConnectMsg(c, ctx, pkt)
 			if action != gnet.None {
 				return
 			}
 		case PktTypeData:
-			action = s.handleDataMsg(ctx, pkt)
+			action = s.handleDataMsg(c, ctx, pkt)
 			if action != gnet.None {
 				return
 			}
 		case PktTypeHeartbeat:
-			action = s.handleHeartbeatMsg(ctx, pkt)
+			action = s.handleHeartbeatMsg(c, ctx, pkt)
 			if action != gnet.None {
 				return
 			}
 		case PktTypeDisconnect:
-			action = s.handleDisconnectMsg(ctx, pkt)
+			action = s.handleDisconnectMsg(c, ctx, pkt)
 			if action != gnet.None {
 				return
 			}
@@ -112,67 +139,91 @@ func (s *ProxyServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 }
 
 // |clientId|
-func (s *ProxyServer) handleAuthMsg(ctx *ProxyChannelContext, pkt *packet) gnet.Action {
+func (s *ProxyServer) handleAuthMsg(_ gnet.Conn, ctx *ProxyChannelContext, pkt *packet) gnet.Action {
 	data := pkt.Data
 	clientId := string(data)
+
+	log.Printf("receive auth msg from client %s\n", clientId)
+
+	ctx.mu.Lock()
 	ctx.clientId = clientId
 	ctx.channelType = 0
+	ctx.mu.Unlock()
+
 	ports := s.cfg.GetClientInetPorts(clientId)
-	cmdChannel := ctx.conn
 	for _, port := range ports {
 		// 这个映射是代理服务器对外开了哪些端口，对应的使用哪个客户端连上来的tcp连接来发送指令到客户端
-		s.portCmdChannelMap.Store(port, cmdChannel)
+		s.portCmdChannelCtxMap.Store(port, ctx)
 	}
-	s.cmdChannels.Store(clientId, cmdChannel)
+	s.cmdChannelCtxMap.Store(clientId, ctx)
 	return gnet.None
 }
 
 // |userId:8|clientIdLen:4|clientId:clientIdLen|
-func (s *ProxyServer) handleConnectMsg(ctx *ProxyChannelContext, pkt *packet) gnet.Action {
+func (s *ProxyServer) handleConnectMsg(_ gnet.Conn, ctx *ProxyChannelContext, pkt *packet) gnet.Action {
+	ctx.mu.Lock()
 	ctx.channelType = 1
+	ctx.mu.Lock()
+
 	data := pkt.Data
 	userId := binary.LittleEndian.Uint64(data[:8])
 	clientIdLen := binary.LittleEndian.Uint32(data[8:12])
 	clientId := string(data[12 : 12+clientIdLen])
-	cmdChannel, ok := s.cmdChannels.Load(clientId)
+
+	log.Printf("receive connect success msg from client %s, userId %d\n", clientId, userId)
+
+	cmdChannel, ok := s.cmdChannelCtxMap.Load(clientId)
 	if !ok {
 		log.Printf("client %s not found\n", clientId)
 		return gnet.Close
 	}
 	// 这里会不会有并发问题啊？两个链接同时连上来，发了相同的userId，那么就会在两个协程里共同操作这个userChannel
-	userChannel, ok := cmdChannel.(gnet.Conn).Context().(*ProxyChannelContext).userChannels.Load(userId)
+	userChannelCtx0, ok := cmdChannel.(*ProxyChannelContext).userChannelCtxMap.Load(userId)
 	if ok {
+		userChannelCtx := userChannelCtx0.(*UserChannelContext)
+		ctx.mu.Lock()
 		ctx.clientId = clientId
 		ctx.userId = userId
+		ctx.nextChannelCtx = userChannelCtx
+		ctx.mu.Unlock()
 
-		ctx.nextConn = userChannel.(gnet.Conn)
-		userChannel.(gnet.Conn).Context().(*UserChannelContext).nextConn = ctx.conn
+		userChannelCtx.mu.Lock()
+		userChannelCtx.nextChannelCtx = ctx
+		userChannelCtx.mu.Unlock()
 	}
 	return gnet.None
 }
 
 // |data|
-func (s *ProxyServer) handleDataMsg(ctx *ProxyChannelContext, pkt *packet) gnet.Action {
+func (s *ProxyServer) handleDataMsg(_ gnet.Conn, ctx *ProxyChannelContext, pkt *packet) gnet.Action {
+	log.Printf("receive data msg from channel, channel type %d\n", ctx.channelType)
 	data := pkt.Data
-	nextChannel := ctx.nextConn
-	if nextChannel != nil {
-		err := nextChannel.AsyncWrite(data, nil)
+	ctx.mu.RLock()
+	nextChannelCtx := ctx.nextChannelCtx
+	ctx.mu.RUnlock()
+	if nextChannelCtx != nil {
+
+		nextChannelCtx.mu.RLock()
+		nexConn := nextChannelCtx.conn
+		nextChannelCtx.mu.RUnlock()
+
+		err := nexConn.AsyncWrite(data, nil)
 		if err != nil {
 			log.Printf("write data packet error %v\n", err)
-			_ = nextChannel.CloseWithCallback(nil)
+			_ = nexConn.CloseWithCallback(nil)
 		}
 	}
 	return gnet.None
 }
 
 // |seq:8|
-func (s *ProxyServer) handleHeartbeatMsg(ctx *ProxyChannelContext, pkt *packet) gnet.Action {
+func (s *ProxyServer) handleHeartbeatMsg(c gnet.Conn, _ *ProxyChannelContext, pkt *packet) gnet.Action {
 	data := pkt.Data
 	seq := binary.LittleEndian.Uint64(data)
 	log.Printf("receive heartbeat seq %d\n", seq)
 	heartbeatPacket := NewHeartbeatPacket(seq)
 	buf := Encode(heartbeatPacket)
-	_, err := ctx.conn.Write(buf)
+	_, err := c.Write(buf)
 	if err != nil {
 		log.Printf("write heartbeat packet error %v\n", err)
 		return gnet.Close
@@ -181,22 +232,32 @@ func (s *ProxyServer) handleHeartbeatMsg(ctx *ProxyChannelContext, pkt *packet) 
 }
 
 // |userId:8|
-func (s *ProxyServer) handleDisconnectMsg(ctx *ProxyChannelContext, pkt *packet) (action gnet.Action) {
+func (s *ProxyServer) handleDisconnectMsg(c gnet.Conn, ctx *ProxyChannelContext, pkt *packet) (action gnet.Action) {
+	ctx.mu.RLock()
 	clientId := ctx.clientId
+	channelType := ctx.channelType
+	userId := ctx.userId
+	ctx.mu.RUnlock()
 	data := pkt.Data
 	log.Printf("receive disconnect msg from channel, channel type %d\n", ctx.channelType)
-	if ctx.channelType == -1 {
+	if channelType == -1 {
 		// invalid channel
 		return gnet.Close
 	}
 	// 代理连接没有连上服务器由控制连接发送用户端断开连接消息
-	if ctx.channelType == 0 {
+	if channelType == 0 {
 		userId := binary.LittleEndian.Uint64(data)
-		userChannel, ok := ctx.userChannels.Load(userId)
+		userChannelCtx0, ok := ctx.userChannelCtxMap.Load(userId)
 		if ok {
-			ctx.userChannels.Delete(userId)
+			userChannelCtx := userChannelCtx0.(*UserChannelContext)
+
+			userChannelCtx.mu.RLock()
+			userChannel := userChannelCtx.conn
+			userChannelCtx.mu.RUnlock()
+
+			ctx.userChannelCtxMap.Delete(userId)
 			// Flush and close the connection immediately when the last message of the server has been sent.
-			err := userChannel.(gnet.Conn).AsyncWrite(EmptyBuf, func(c gnet.Conn, err error) error {
+			err := userChannel.AsyncWrite(EmptyBuf, func(c gnet.Conn, err error) error {
 				_ = c.Flush()
 				_ = c.Close()
 				return nil
@@ -207,20 +268,25 @@ func (s *ProxyServer) handleDisconnectMsg(ctx *ProxyChannelContext, pkt *packet)
 		}
 		return gnet.None
 	}
-	cmdChannel, ok := s.cmdChannels.Load(clientId)
+	cmdChannelCtx0, ok := s.cmdChannelCtxMap.Load(clientId)
 	if !ok {
 		log.Fatalf("client %s not found\n", clientId)
 		return gnet.None
 	}
 	// 从用户连接发送上来的断开连接消息
-	userChannel := ctx.nextConn
+	cmdChannelCtx := cmdChannelCtx0.(*ProxyChannelContext)
+	userChannel := c
 	if ok {
-		cmdChannel.(gnet.Conn).Context().(*ProxyChannelContext).userChannels.Delete(ctx.userId)
-		ctx.nextConn = nil
+		cmdChannelCtx.userChannelCtxMap.Delete(userId)
+
+		ctx.mu.Lock()
+		ctx.nextChannelCtx = nil
 		ctx.userId = 0
 		ctx.clientId = ""
+		ctx.mu.Unlock()
+
 		// Flush and close the connection immediately when the last message of the server has been sent.
-		err := userChannel.(gnet.Conn).AsyncWrite(EmptyBuf, func(c gnet.Conn, err error) error {
+		err := userChannel.AsyncWrite(EmptyBuf, func(c gnet.Conn, err error) error {
 			_ = c.Flush()
 			_ = c.Close()
 			return nil

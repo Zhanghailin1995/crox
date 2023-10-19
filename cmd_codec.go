@@ -56,7 +56,12 @@ func Decode(c gnet.Conn) (*packet, error) {
 	return pkt, nil
 }
 
-func NewDataPaket(data []byte) *packet {
+func NewAuthPacket(clientId string) *packet {
+	data := []byte(clientId)
+	return NewPacket(PktTypeAuth, data)
+}
+
+func NewDataPacket(data []byte) *packet {
 	return NewPacket(PktTypeData, data)
 }
 
@@ -64,6 +69,16 @@ func NewHeartbeatPacket(seq uint64) *packet {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, seq)
 	return NewPacket(PktTypeHeartbeat, data)
+}
+
+func NewProxyConnectPacket(userId uint64, clientId string) *packet {
+	clientIdLen := len([]byte(clientId))
+	dataLen := 8 + 4 + clientIdLen
+	data := make([]byte, dataLen)
+	binary.LittleEndian.PutUint64(data, userId)
+	binary.LittleEndian.PutUint32(data[8:], uint32(clientIdLen))
+	copy(data[12:], clientId)
+	return NewPacket(PktTypeConnect, data)
 }
 
 func NewConnectPacket(userId uint64, lan string) *packet {

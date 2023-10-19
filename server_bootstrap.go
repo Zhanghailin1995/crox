@@ -34,6 +34,7 @@ func (boot *ServerBootstrap) Boot() {
 		userServer := &UserServer{
 			network:     "tcp",
 			addr:        fmt.Sprintf(":%d", port),
+			port:        port,
 			proxyServer: proxyServer,
 		}
 		userServer.Start()

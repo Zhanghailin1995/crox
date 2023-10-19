@@ -218,7 +218,7 @@ func TestDecode(t *testing.T) {
 
 func TestNewTransferPacket(t *testing.T) {
 	data := []byte("transfer packet")
-	pkt := NewDataPaket(data)
+	pkt := NewDataPacket(data)
 	// check pkt
 	if pkt.Magic != packetMagic {
 		t.Errorf("pkt.Magic = %d, want %d", pkt.Magic, packetMagic)

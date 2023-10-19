@@ -1,34 +1,14 @@
 [
   {
-    "name":"4G充电器测试客户端",
-    "clientKey":"6389d977db7f4227bf7e04b2d3305d88",
-    "proxyMappings":[
+    "name": "测试客户端",
+    "clientKey": "6389d977db7f4227bf7e04b2d3305d88",
+    "proxyMappings": [
       {
-        "inetPort":8988,
-        "lan":"192.168.1.134:81",
-        "name":"本地后台服务代理"
-      },
-      {
-        "inetPort":8999,
-        "lan":"192.168.1.134:8999",
-        "name":"本地iot-drone代理"
-      },
-      {
-        "inetPort":8103,
-        "lan":"192.168.1.26:3000",
-        "name":"gogs穿透"
-      },
-      {
-        "name":"cwy册数",
-        "inetPort":8393,
-        "lan":"192.168.1.53:60000"
-      },
-      {
-        "inetPort":8918,
-        "lan":"192.168.1.57:81",
-        "name":"开发版本后台接口"
+        "inetPort": 8699,
+        "lan": "192.168.1.57:7399",
+        "name": "ceshi"
       }
     ],
-    "status":1
+    "status": 1
   }
 ]
