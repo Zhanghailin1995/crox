@@ -118,6 +118,9 @@ func (client *ProxyClient) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) 
 }
 
 func (client *ProxyClient) OnClose(c gnet.Conn, err error) (action gnet.Action) {
+	if err != nil {
+		log.Printf("closed by error: %v\n", err)
+	}
 	context := c.Context().(*ClientProxyChannelContext)
 	if context == client.cmdChannelCtx {
 		client.mu.Lock()
