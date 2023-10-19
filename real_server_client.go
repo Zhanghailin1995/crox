@@ -64,7 +64,11 @@ func (client *RealServerClient) OnOpen(c gnet.Conn) (out []byte, action gnet.Act
 }
 
 func (client *RealServerClient) OnClose(c gnet.Conn, err error) (action gnet.Action) {
-	context := c.Context().(*RealServerChannelContext)
+	context0 := c.Context()
+	if context0 == nil {
+		return gnet.None
+	}
+	context := context0.(*RealServerChannelContext)
 	if context != nil {
 		nextChannelCtx := context.GetNextChannelCtx()
 		if nextChannelCtx != nil {

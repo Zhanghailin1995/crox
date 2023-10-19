@@ -90,6 +90,7 @@ func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 
 		cmdChannelCtx := cmdChannelCtx0.(*ProxyChannelContext)
 		cmdConn := cmdChannelCtx.GetConn()
+		log.Printf("user server on open, userId: %d, lan: %s\n", userId, lan)
 		cmdChannelCtx.userChannelCtxMap.Store(userId, ctx)
 		// TODO send proxy msg to proxy client, tell client there is a new connect into
 		pkt := NewConnectPacket(userId, lan)

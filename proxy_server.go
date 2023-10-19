@@ -161,9 +161,10 @@ func (s *ProxyServer) handleAuthMsg(_ gnet.Conn, ctx *ProxyChannelContext, pkt *
 
 // |userId:8|clientIdLen:4|clientId:clientIdLen|
 func (s *ProxyServer) handleConnectMsg(_ gnet.Conn, ctx *ProxyChannelContext, pkt *packet) gnet.Action {
+	log.Printf("receive connect msg from client\n")
 	ctx.mu.Lock()
 	ctx.channelType = 1
-	ctx.mu.Lock()
+	ctx.mu.Unlock()
 
 	data := pkt.Data
 	userId := binary.LittleEndian.Uint64(data[:8])
@@ -190,6 +191,8 @@ func (s *ProxyServer) handleConnectMsg(_ gnet.Conn, ctx *ProxyChannelContext, pk
 		userChannelCtx.mu.Lock()
 		userChannelCtx.nextChannelCtx = ctx
 		userChannelCtx.mu.Unlock()
+	} else {
+		log.Printf("user %d not found\n", userId)
 	}
 	return gnet.None
 }
@@ -275,25 +278,28 @@ func (s *ProxyServer) handleDisconnectMsg(c gnet.Conn, ctx *ProxyChannelContext,
 	}
 	// 从用户连接发送上来的断开连接消息
 	cmdChannelCtx := cmdChannelCtx0.(*ProxyChannelContext)
-	userChannel := c
-	if ok {
-		cmdChannelCtx.userChannelCtxMap.Delete(userId)
+	cmdChannelCtx.userChannelCtxMap.Delete(userId)
 
-		ctx.mu.Lock()
-		ctx.nextChannelCtx = nil
-		ctx.userId = 0
-		ctx.clientId = ""
-		ctx.mu.Unlock()
+	userChannelCtx := ctx.GetNextChannelCtx()
+	userChannel := userChannelCtx.GetConn()
 
-		// Flush and close the connection immediately when the last message of the server has been sent.
-		err := userChannel.AsyncWrite(EmptyBuf, func(c gnet.Conn, err error) error {
-			_ = c.Flush()
-			_ = c.Close()
+	ctx.mu.Lock()
+	ctx.nextChannelCtx = nil
+	ctx.userId = 0
+	ctx.clientId = ""
+	ctx.mu.Unlock()
+
+	// Flush and close the connection immediately when the last message of the server has been sent.
+	err := userChannel.Wake(func(c gnet.Conn, err error) error {
+		_ = c.Flush()
+		_ = c.CloseWithCallback(func(c gnet.Conn, err error) error {
+			log.Printf("user channel close, userId %d\n", userId)
 			return nil
 		})
-		if err != nil {
-			log.Fatalf("write disconnect packet error %v\n", err)
-		}
+		return nil
+	})
+	if err != nil {
+		log.Fatalf("write disconnect packet error %v\n", err)
 	}
 	return gnet.None
 
