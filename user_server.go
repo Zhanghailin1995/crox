@@ -17,6 +17,13 @@ type UserConnContext struct {
 	mu          sync.RWMutex
 }
 
+func (ctx *UserConnContext) GetUserId() uint64 {
+	ctx.mu.RLock()
+	userId := ctx.userId
+	ctx.mu.RUnlock()
+	return userId
+}
+
 func (ctx *UserConnContext) SetNextConnCtx(nextConnCtx *ProxyConnContext) {
 	ctx.mu.Lock()
 	ctx.nextConnCtx = nextConnCtx
@@ -70,18 +77,17 @@ func (s *UserServer) OnBoot(eng gnet.Engine) (action gnet.Action) {
 }
 
 func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
-	logging.Infof("user server on open")
+	logging.Infof("user server: %s://%s accept a new conn: %s", s.network, s.addr, c.RemoteAddr())
 	ctx := &UserConnContext{
 		conn: c,
 	}
 	c.SetContext(ctx)
 	cmdConnCtx0, ok := s.proxyServer.portCmdConnCtxMap.Load(s.port)
 	if !ok {
-		logging.Infof("port :%d cmd conn not found", s.port)
+		logging.Warnf("can not found cmd conn, port: %d", s.port)
 		action = gnet.Close
 		return
 	} else {
-
 		userId := NewUserId()
 		lan := s.proxyServer.cfg.GetLan(s.port)
 
@@ -94,7 +100,6 @@ func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 		cmdConn := cmdConnCtx.GetConn()
 		logging.Infof("user server on open, userId: %d, lan: %s", userId, lan)
 		cmdConnCtx.userConnCtxMap.Store(userId, ctx)
-		// TODO send proxy msg to proxy client, tell client there is a new connect into
 		pkt := NewConnectPacket(userId, lan)
 		buf := Encode(pkt)
 		_ = cmdConn.AsyncWrite(buf, nil)
@@ -103,18 +108,14 @@ func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 }
 
 func (s *UserServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
-	logging.Infof("user server on traffic")
 	ctx := c.Context().(*UserConnContext)
-
+	userId := ctx.GetUserId()
 	nextConnCtx := ctx.GetNextConnCtx()
-
 	nextConn := nextConnCtx.GetConn()
-
-	logging.Infof("read msg from user client")
 
 	if nextConn == nil {
 		action = gnet.Close
-		logging.Warnf("next conn is nil")
+		logging.Warnf("read from user conn, userId: %d, but next conn is nil", userId)
 		return
 	} else {
 		for {
@@ -126,17 +127,17 @@ func (s *UserServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 			buf := make([]byte, n)
 			_, err := c.Read(buf)
 			if err != nil {
-				logging.Infof("read from user conn error: %v", err)
+				logging.Errorf("read from user conn error, userId: %d, error: %v", userId, err)
 				return gnet.Close
 			}
 			pkt := NewDataPacket(buf)
 			msg := Encode(pkt)
 			err = nextConn.AsyncWrite(msg, nil)
 			if err != nil {
-				logging.Infof("write to proxy conn error: %v", err)
+				logging.Errorf("user id: %d, write to next conn error: %v", userId, err)
 				return gnet.Close
 			}
-			logging.Infof("write data packet to proxy conn success")
+			logging.Debugf("user id: %d, write data packet to next conn success")
 		}
 	}
 	return

@@ -69,7 +69,6 @@ func (client *ProxyClient) PollProxyConn(cb PollProxyConnCallback) {
 				}
 				// hack method we should call SetContext() in EventHandle
 				_ = proxyConn.Wake(func(c gnet.Conn, err error) error {
-					logging.Infof("set proxy conn context-------------------")
 					c.SetContext(proxyConnCtx)
 					return nil
 				})
@@ -128,6 +127,8 @@ func (client *ProxyClient) OnClose(c gnet.Conn, err error) (action gnet.Action) 
 		client.cmdConnCtx = nil
 		client.mu.Unlock()
 		// TODO close all real server conn
+
+		// TODO reconnect to proxy server
 	} else {
 		nextConnCtx := context.GetNextConnCtx()
 		if nextConnCtx != nil {
@@ -227,7 +228,6 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 			realServerConnCtx.mu.Lock()
 			realServerConnCtx.nextConnCtx = clientProxyConnCtx
 			realServerConnCtx.mu.Unlock()
-			logging.Infof("----------------------------------")
 		})
 
 		// hack method we should call SetContext() in EventHandle
