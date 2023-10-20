@@ -1,8 +1,12 @@
 package main
 
-import "crox"
+import (
+	"crox"
+	"crox/pkg/logging"
+)
 
 func main() {
+	logging.DefaultLogger()
 	bootServer := &crox.ServerBootstrap{}
 	bootServer.Boot()
 }

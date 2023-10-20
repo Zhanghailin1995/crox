@@ -2,8 +2,8 @@ package crox
 
 import (
 	"context"
+	"crox/pkg/logging"
 	"fmt"
-	"log"
 	"sync"
 )
 
@@ -43,5 +43,5 @@ func (boot *ServerBootstrap) Boot() {
 	// 4. wait shutdown
 
 	<-boot.shutdownCtx.Done()
-	log.Println("server shutdown")
+	logging.Infof("server shutdown")
 }

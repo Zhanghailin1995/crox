@@ -3,8 +3,8 @@ package crox
 import (
 	"container/list"
 	"context"
+	"crox/pkg/logging"
 	"github.com/panjf2000/gnet/v2"
-	"log"
 )
 
 type ClientBootstrap struct {
@@ -17,31 +17,32 @@ func (boot *ClientBootstrap) Boot(clientId string, proxyAddr string) {
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	boot.shutdownCtx = shutdownCtx
 	proxyClient := &ProxyClient{
-		clientId:             clientId,
-		proxyAddr:            proxyAddr,
-		proxyChannelCtxQueue: new(list.List),
+		clientId:          clientId,
+		proxyAddr:         proxyAddr,
+		proxyConnCtxQueue: new(list.List),
 	}
 
 	proxyGnetCli, err := gnet.NewClient(proxyClient, gnet.WithMulticore(true), gnet.WithReusePort(true))
 	if err != nil {
-		log.Fatalf("create proxy client error %v\n", err)
+		logging.Fatalf("create proxy client error %v", err)
+		logging.Fatalf("create proxy client error %v", err)
 	}
 	proxyClient.proxyCli = proxyGnetCli
 	cmdConn, err := proxyGnetCli.Dial("tcp", proxyAddr)
 	if err != nil {
-		log.Fatalf("connect proxy server error %v\n", err)
+		logging.Fatalf("connect proxy server error %v", err)
 	}
-	log.Printf("connect proxy server %s success\n", proxyAddr)
-	cmdCtx := &ClientProxyChannelContext{
+	logging.Infof("connect proxy server %s success", proxyAddr)
+	cmdConnCtx := &ClientProxyConnContext{
 		conn:         cmdConn,
 		lastReadTime: 0,
 	}
-	proxyClient.cmdChannelCtx = cmdCtx
+	proxyClient.cmdConnCtx = cmdConnCtx
 
 	realServerClient := &RealServerClient{}
 	realServerGnetCli, err := gnet.NewClient(realServerClient, gnet.WithMulticore(true), gnet.WithReusePort(true))
 	if err != nil {
-		log.Fatalf("create real server client error %v\n", err)
+		logging.Fatalf("create real server client error %v", err)
 	}
 	realServerClient.gnetCli = realServerGnetCli
 
@@ -56,14 +57,14 @@ func (boot *ClientBootstrap) Boot(clientId string, proxyAddr string) {
 	buf := Encode(authPkt)
 	cmdConn.AsyncWrite(buf, func(c gnet.Conn, err error) error {
 		if err != nil {
-			log.Printf("write auth packet error %v\n", err)
+			logging.Infof("write auth packet error %v", err)
 			cancel()
 			return nil
 		}
-		c.SetContext(cmdCtx)
+		c.SetContext(cmdConnCtx)
 		return nil
 	})
 
 	<-shutdownCtx.Done()
-	log.Println("client bootstrap shutdown")
+	logging.Infof("client bootstrap shutdown")
 }

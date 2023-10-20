@@ -2,105 +2,106 @@ package crox
 
 import (
 	"container/list"
+	"crox/pkg/logging"
 	"encoding/binary"
 	"github.com/panjf2000/gnet/v2"
-	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 )
 
-type ClientProxyChannelContext struct {
-	conn           gnet.Conn
-	lastReadTime   int64
-	nextChannelCtx *RealServerChannelContext
-	mu             sync.RWMutex
+type ClientProxyConnContext struct {
+	conn         gnet.Conn
+	lastReadTime int64
+	nextConnCtx  *RealServerConnContext
+	mu           sync.RWMutex
 }
 
-func (ctx *ClientProxyChannelContext) SetConn(conn gnet.Conn) {
+func (ctx *ClientProxyConnContext) SetConn(conn gnet.Conn) {
 	ctx.mu.Lock()
 	ctx.conn = conn
 	ctx.mu.Unlock()
 }
 
-func (ctx *ClientProxyChannelContext) SetNextChannelCtx(nextChannelCtx *RealServerChannelContext) {
+func (ctx *ClientProxyConnContext) SetNextConnCtx(nextConnCtx *RealServerConnContext) {
 	ctx.mu.Lock()
-	ctx.nextChannelCtx = nextChannelCtx
+	ctx.nextConnCtx = nextConnCtx
 	ctx.mu.Unlock()
 }
 
-func (ctx *ClientProxyChannelContext) RemoveNextChannelCtx(nextChannelCtx *RealServerChannelContext) {
+func (ctx *ClientProxyConnContext) RemoveNextConnCtx(expect *RealServerConnContext) {
 	ctx.mu.Lock()
-	if ctx.nextChannelCtx == nextChannelCtx {
-		ctx.nextChannelCtx = nil
+	if ctx.nextConnCtx == expect {
+		ctx.nextConnCtx = nil
 	}
 	ctx.mu.Unlock()
 }
 
-func (ctx *ClientProxyChannelContext) GetConn() gnet.Conn {
+func (ctx *ClientProxyConnContext) GetConn() gnet.Conn {
 	ctx.mu.RLock()
 	conn := ctx.conn
 	ctx.mu.RUnlock()
 	return conn
 }
 
-func (ctx *ClientProxyChannelContext) GetNextChannelCtx() *RealServerChannelContext {
+func (ctx *ClientProxyConnContext) GetNextConnCtx() *RealServerConnContext {
 	ctx.mu.RLock()
-	nextChannelCtx := ctx.nextChannelCtx
+	nextConnCtx := ctx.nextConnCtx
 	ctx.mu.RUnlock()
-	return nextChannelCtx
+	return nextConnCtx
 }
 
-type PollProxyChannelCallback func(ctx *ClientProxyChannelContext, err error)
+type PollProxyConnCallback func(ctx *ClientProxyConnContext, err error)
 
-func (client *ProxyClient) PollProxyChannel(cb PollProxyChannelCallback) {
+func (client *ProxyClient) PollProxyConn(cb PollProxyConnCallback) {
 	client.queueMu.Lock()
-	if client.proxyChannelCtxQueue.Len() == 0 {
+	if client.proxyConnCtxQueue.Len() == 0 {
 		client.queueMu.Unlock()
 		go func() {
 			proxyConn, err := client.proxyCli.Dial("tcp", client.proxyAddr)
 			if err != nil {
-				log.Printf("connect proxy server error: %v\n", err)
+				logging.Infof("connect proxy server error: %v", err)
 				cb(nil, err)
 				return
 			} else {
-				proxyChannelCtx := &ClientProxyChannelContext{
+				proxyConnCtx := &ClientProxyConnContext{
 					conn: proxyConn,
 				}
 				// hack method we should call SetContext() in EventHandle
 				_ = proxyConn.Wake(func(c gnet.Conn, err error) error {
-					c.SetContext(proxyChannelCtx)
+					logging.Infof("set proxy conn context-------------------")
+					c.SetContext(proxyConnCtx)
 					return nil
 				})
-				cb(proxyChannelCtx, nil)
+				cb(proxyConnCtx, nil)
 			}
 		}()
 	} else {
-		e := client.proxyChannelCtxQueue.Front()
-		client.proxyChannelCtxQueue.Remove(e)
+		e := client.proxyConnCtxQueue.Front()
+		client.proxyConnCtxQueue.Remove(e)
 		client.queueMu.Unlock()
-		proxyChannelCtx := e.Value.(*ClientProxyChannelContext)
-		cb(proxyChannelCtx, nil)
+		proxyConnCtx := e.Value.(*ClientProxyConnContext)
+		cb(proxyConnCtx, nil)
 	}
 }
 
-func (client *ProxyClient) OfferProxyChannel(ctx *ClientProxyChannelContext) {
+func (client *ProxyClient) OfferProxyConn(ctx *ClientProxyConnContext) {
 	client.queueMu.Lock()
 	defer client.queueMu.Unlock()
-	client.proxyChannelCtxQueue.PushBack(ctx)
+	client.proxyConnCtxQueue.PushBack(ctx)
 }
 
 type ProxyClient struct {
 	*gnet.BuiltinEventEngine
-	clientId             string
-	eng                  gnet.Engine
-	proxyCli             *gnet.Client
-	proxyAddr            string
-	proxyChannelCtxQueue *list.List
-	queueMu              sync.Mutex
-	realServerCli        *RealServerClient
-	cmdChannelCtx        *ClientProxyChannelContext
-	mu                   sync.Mutex
+	clientId          string
+	eng               gnet.Engine
+	proxyCli          *gnet.Client
+	proxyAddr         string
+	proxyConnCtxQueue *list.List
+	queueMu           sync.Mutex
+	realServerCli     *RealServerClient
+	cmdConnCtx        *ClientProxyConnContext
+	mu                sync.Mutex
 }
 
 func (client *ProxyClient) OnBoot(eng gnet.Engine) (action gnet.Action) {
@@ -109,7 +110,7 @@ func (client *ProxyClient) OnBoot(eng gnet.Engine) (action gnet.Action) {
 }
 
 func (client *ProxyClient) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
-	ctx := &ClientProxyChannelContext{
+	ctx := &ClientProxyConnContext{
 		conn:         c,
 		lastReadTime: 0,
 	}
@@ -119,25 +120,25 @@ func (client *ProxyClient) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) 
 
 func (client *ProxyClient) OnClose(c gnet.Conn, err error) (action gnet.Action) {
 	if err != nil {
-		log.Printf("closed by error: %v\n", err)
+		logging.Infof("closed by error: %v", err)
 	}
-	context := c.Context().(*ClientProxyChannelContext)
-	if context == client.cmdChannelCtx {
+	context := c.Context().(*ClientProxyConnContext)
+	if context == client.cmdConnCtx {
 		client.mu.Lock()
-		client.cmdChannelCtx = nil
+		client.cmdConnCtx = nil
 		client.mu.Unlock()
-		// TODO close all real server channel
+		// TODO close all real server conn
 	} else {
-		nextChannelCtx := context.GetNextChannelCtx()
-		if nextChannelCtx != nil {
+		nextConnCtx := context.GetNextConnCtx()
+		if nextConnCtx != nil {
 			// 解绑两个链接的一对一关系
-			context.RemoveNextChannelCtx(nextChannelCtx)
-			nextChannelCtx.RemoveNextChannelCtx(context)
+			context.RemoveNextConnCtx(nextConnCtx)
+			nextConnCtx.RemoveNextConnCtx(context)
 
-			nextConn := nextChannelCtx.GetConn()
+			nextConn := nextConnCtx.GetConn()
 			closeErr := nextConn.CloseWithCallback(nil)
 			if closeErr != nil {
-				log.Printf("close real server channel error: %v\n", closeErr)
+				logging.Infof("close real server conn error: %v", closeErr)
 			}
 		}
 	}
@@ -145,14 +146,14 @@ func (client *ProxyClient) OnClose(c gnet.Conn, err error) (action gnet.Action) 
 }
 
 func (client *ProxyClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
-	ctx := c.Context().(*ClientProxyChannelContext)
+	ctx := c.Context().(*ClientProxyConnContext)
 	atomic.StoreInt64(&ctx.lastReadTime, time.Now().UnixMilli())
 	for {
 		pkt, err := Decode(c)
 		if err == ErrIncompletePacket {
 			break
 		} else if err == ErrInvalidMagicNumber {
-			log.Printf("invalid packet: %v", err)
+			logging.Infof("invalid packet: %v", err)
 			return gnet.Close
 		}
 		switch pkt.Type {
@@ -176,9 +177,9 @@ func (client *ProxyClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	return
 }
 
-func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyChannelContext, pkt *packet) (action gnet.Action) {
+func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnContext, pkt *packet) (action gnet.Action) {
 	// TODO
-	cmdChannel := c
+	cmdConn := c
 	data := pkt.Data
 	clientId := client.clientId
 	userId := binary.LittleEndian.Uint64(data[0:8])
@@ -190,48 +191,48 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyChannelCo
 	go func() {
 		realConn, err := realServerCli.Dial(lan)
 		if err != nil {
-			log.Printf("connect real server error: %v\n", err)
+			logging.Infof("connect real server error: %v", err)
 			pkt := NewDisconnectPacket(userId)
 			buf := Encode(pkt)
-			_ = cmdChannel.AsyncWrite(buf, nil)
+			_ = cmdConn.AsyncWrite(buf, nil)
 			return
 		}
-		realServerChannelCtx := &RealServerChannelContext{
+		realServerConnCtx := &RealServerConnContext{
 			userId: userId,
 			conn:   realConn,
 		}
 		// 会不会因为proxy server 不停的发connect和disconnect包，导致出现并发问题
-		client.PollProxyChannel(func(clientProxyChannelCtx *ClientProxyChannelContext, err error) {
+		client.PollProxyConn(func(clientProxyConnCtx *ClientProxyConnContext, err error) {
 			if err != nil {
-				log.Printf("poll proxy channel error: %v\n", err)
-				didConnectPkt := NewDisconnectPacket(userId)
-				buf := Encode(didConnectPkt)
-				_ = cmdChannel.AsyncWrite(buf, nil)
+				logging.Infof("poll proxy conn error: %v", err)
+				disconnectPkt := NewDisconnectPacket(userId)
+				buf := Encode(disconnectPkt)
+				_ = cmdConn.AsyncWrite(buf, nil)
 				return
 			}
-			log.Println("poll proxy channel success")
-			clientProxyChannelCtx.mu.Lock()
-			clientProxyChannelCtx.nextChannelCtx = realServerChannelCtx
-			clientProxyChannel := clientProxyChannelCtx.conn
-			clientProxyChannelCtx.mu.Unlock()
+			logging.Infof("poll proxy conn success")
+			clientProxyConnCtx.mu.Lock()
+			clientProxyConnCtx.nextConnCtx = realServerConnCtx
+			clientProxyConn := clientProxyConnCtx.conn
+			clientProxyConnCtx.mu.Unlock()
 
 			// 发送给proxy server告诉他已经连上了real server
 			connectPkt := NewProxyConnectPacket(userId, clientId)
 			buf := Encode(connectPkt)
-			_ = clientProxyChannel.AsyncWrite(buf, func(c gnet.Conn, err error) error {
-				log.Printf("userId: %d write connect packet to proxy server success\n", userId)
+			_ = clientProxyConn.AsyncWrite(buf, func(c gnet.Conn, err error) error {
+				logging.Infof("userId: %d write connect packet to proxy server success", userId)
 				return nil
 			})
 
-			realServerChannelCtx.mu.Lock()
-			realServerChannelCtx.nextChannelCtx = clientProxyChannelCtx
-			realServerChannelCtx.mu.Unlock()
-			log.Println("----------------------------------")
+			realServerConnCtx.mu.Lock()
+			realServerConnCtx.nextConnCtx = clientProxyConnCtx
+			realServerConnCtx.mu.Unlock()
+			logging.Infof("----------------------------------")
 		})
 
 		// hack method we should call SetContext() in EventHandle
 		_ = realConn.Wake(func(c gnet.Conn, err error) error {
-			c.SetContext(realServerChannelCtx)
+			c.SetContext(realServerConnCtx)
 			return nil
 		})
 	}()
@@ -239,49 +240,49 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyChannelCo
 	return
 }
 
-func (client *ProxyClient) handleDataMsg(_ gnet.Conn, ctx *ClientProxyChannelContext, pkt *packet) (action gnet.Action) {
-	log.Printf("receive data msg from proxy server\n")
+func (client *ProxyClient) handleDataMsg(_ gnet.Conn, ctx *ClientProxyConnContext, pkt *packet) (action gnet.Action) {
+	logging.Infof("receive data msg from proxy server")
 	ctx.mu.RLock()
-	nextChannelCtx := ctx.nextChannelCtx
+	nextConnCtx := ctx.nextConnCtx
 	ctx.mu.RUnlock()
-	if nextChannelCtx != nil {
-		nextChannelCtx.mu.RLock()
-		userId := nextChannelCtx.userId
-		nexConn := nextChannelCtx.conn
-		nextChannelCtx.mu.RUnlock()
+	if nextConnCtx != nil {
+		nextConnCtx.mu.RLock()
+		userId := nextConnCtx.userId
+		nexConn := nextConnCtx.conn
+		nextConnCtx.mu.RUnlock()
 		err := nexConn.AsyncWrite(pkt.Data, func(c gnet.Conn, err error) error {
 			if err != nil {
-				log.Printf("write to %d data packet error %v\n", userId, err)
+				logging.Infof("write to %d data packet error %v", userId, err)
 			}
 			return nil
 		})
 		if err != nil {
-			log.Printf("write to %d data packet error %v\n", userId, err)
+			logging.Infof("write to %d data packet error %v", userId, err)
 		}
 	}
 	return
 }
 
-func (client *ProxyClient) handleDisconnectMsg(_ gnet.Conn, ctx *ClientProxyChannelContext, _ *packet) (action gnet.Action) {
+func (client *ProxyClient) handleDisconnectMsg(_ gnet.Conn, ctx *ClientProxyConnContext, _ *packet) (action gnet.Action) {
 	ctx.mu.Lock()
-	nextChannelCtx := ctx.nextChannelCtx
-	ctx.nextChannelCtx = nil
+	nextConnCtx := ctx.nextConnCtx
+	ctx.nextConnCtx = nil
 	ctx.mu.Unlock()
-	if nextChannelCtx != nil {
+	if nextConnCtx != nil {
 
-		nextChannelCtx.mu.Lock()
-		conn := nextChannelCtx.conn
-		nextChannelCtx.nextChannelCtx = nil
-		nextChannelCtx.userId = 0
-		nextChannelCtx.conn = nil
-		nextChannelCtx.mu.Unlock()
+		nextConnCtx.mu.Lock()
+		conn := nextConnCtx.conn
+		nextConnCtx.nextConnCtx = nil
+		nextConnCtx.userId = 0
+		nextConnCtx.conn = nil
+		nextConnCtx.mu.Unlock()
 
-		_ = conn.AsyncWrite(EmptyBuf, func(c gnet.Conn, err error) error {
+		_ = conn.Wake(func(c gnet.Conn, err error) error {
 			c.SetContext(nil)
 			_ = c.Close()
 			return nil
 		})
-		client.OfferProxyChannel(ctx)
+		client.OfferProxyConn(ctx)
 	}
 	return
 }

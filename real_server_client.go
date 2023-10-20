@@ -1,47 +1,47 @@
 package crox
 
 import (
+	"crox/pkg/logging"
 	"github.com/panjf2000/gnet/v2"
-	"log"
 	"sync"
 )
 
-type RealServerChannelContext struct {
-	userId         uint64
-	conn           gnet.Conn
-	nextChannelCtx *ClientProxyChannelContext
-	mu             sync.RWMutex
+type RealServerConnContext struct {
+	userId      uint64
+	conn        gnet.Conn
+	nextConnCtx *ClientProxyConnContext
+	mu          sync.RWMutex
 }
 
-func (ctx *RealServerChannelContext) GetUserId() uint64 {
+func (ctx *RealServerConnContext) GetUserId() uint64 {
 	ctx.mu.RLock()
 	userId := ctx.userId
 	ctx.mu.RUnlock()
 	return userId
 }
 
-func (ctx *RealServerChannelContext) GetNextChannelCtx() *ClientProxyChannelContext {
+func (ctx *RealServerConnContext) GetNextConnCtx() *ClientProxyConnContext {
 	ctx.mu.RLock()
-	nextChannelCtx := ctx.nextChannelCtx
+	nextConnCtx := ctx.nextConnCtx
 	ctx.mu.RUnlock()
-	return nextChannelCtx
+	return nextConnCtx
 }
 
-func (ctx *RealServerChannelContext) SetNextChannelCtx(nextChannelCtx *ClientProxyChannelContext) {
+func (ctx *RealServerConnContext) SetNextConnCtx(nextConnCtx *ClientProxyConnContext) {
 	ctx.mu.Lock()
-	ctx.nextChannelCtx = nextChannelCtx
+	ctx.nextConnCtx = nextConnCtx
 	ctx.mu.Unlock()
 }
 
-func (ctx *RealServerChannelContext) RemoveNextChannelCtx(nextChannelCtx *ClientProxyChannelContext) {
+func (ctx *RealServerConnContext) RemoveNextConnCtx(expect *ClientProxyConnContext) {
 	ctx.mu.Lock()
-	if ctx.nextChannelCtx == nextChannelCtx {
-		ctx.nextChannelCtx = nil
+	if ctx.nextConnCtx == expect {
+		ctx.nextConnCtx = nil
 	}
 	ctx.mu.Unlock()
 }
 
-func (ctx *RealServerChannelContext) GetConn() gnet.Conn {
+func (ctx *RealServerConnContext) GetConn() gnet.Conn {
 	ctx.mu.RLock()
 	conn := ctx.conn
 	ctx.mu.RUnlock()
@@ -68,20 +68,20 @@ func (client *RealServerClient) OnClose(c gnet.Conn, err error) (action gnet.Act
 	if context0 == nil {
 		return gnet.None
 	}
-	context := context0.(*RealServerChannelContext)
+	context := context0.(*RealServerConnContext)
 	if context != nil {
-		nextChannelCtx := context.GetNextChannelCtx()
-		if nextChannelCtx != nil {
+		nextConnCtx := context.GetNextConnCtx()
+		if nextConnCtx != nil {
 
-			context.RemoveNextChannelCtx(nextChannelCtx)
-			nextChannelCtx.RemoveNextChannelCtx(context)
+			context.RemoveNextConnCtx(nextConnCtx)
+			nextConnCtx.RemoveNextConnCtx(context)
 
-			conn := nextChannelCtx.GetConn()
+			ch := nextConnCtx.GetConn()
 			pkt := NewDisconnectPacket(context.GetUserId())
 			buf := Encode(pkt)
-			writeErr := conn.AsyncWrite(buf, nil)
+			writeErr := ch.AsyncWrite(buf, nil)
 			if writeErr != nil {
-				log.Println("write to next channel error", writeErr)
+				logging.Infof("write to next conn error", writeErr)
 			}
 		}
 	}
@@ -93,15 +93,15 @@ func (client *RealServerClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	if context0 == nil {
 		return gnet.None
 	}
-	context := context0.(*RealServerChannelContext)
+	context := context0.(*RealServerConnContext)
 	if context == nil {
 		return gnet.None
 	}
-	nextChannelCtx := context.GetNextChannelCtx()
-	if nextChannelCtx == nil {
+	nextConnCtx := context.GetNextConnCtx()
+	if nextConnCtx == nil {
 		return
 	}
-	nextChannel := nextChannelCtx.GetConn()
+	nextConn := nextConnCtx.GetConn()
 	for {
 		n := c.InboundBuffered()
 		if n <= 0 {
@@ -114,9 +114,9 @@ func (client *RealServerClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
 		}
 		pkt := NewDataPacket(buf)
 		buf = Encode(pkt)
-		err = nextChannel.AsyncWrite(buf, nil)
+		err = nextConn.AsyncWrite(buf, nil)
 		if err != nil {
-			log.Println("write to next channel error", err)
+			logging.Infof("write to next conn error", err)
 		}
 	}
 }

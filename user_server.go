@@ -1,6 +1,7 @@
 package crox
 
 import (
+	"crox/pkg/logging"
 	"fmt"
 	"github.com/panjf2000/gnet/v2"
 	"log"
@@ -8,34 +9,34 @@ import (
 	"sync/atomic"
 )
 
-type UserChannelContext struct {
-	conn           gnet.Conn            // user channel
-	userId         uint64               // 用户id
-	lan            string               // 需要代理的本地内网地址
-	nextChannelCtx *ProxyChannelContext // 代理连接，通过这条连接代理服务器将收到的数据转发到代理客户端，再由代理客户端转发给真正的服务器
-	mu             sync.RWMutex
+type UserConnContext struct {
+	conn        gnet.Conn         // user conn
+	userId      uint64            // 用户id
+	lan         string            // 需要代理的本地内网地址
+	nextConnCtx *ProxyConnContext // 代理连接，通过这条连接代理服务器将收到的数据转发到代理客户端，再由代理客户端转发给真正的服务器
+	mu          sync.RWMutex
 }
 
-func (ctx *UserChannelContext) SetNextChannelCtx(nextChannelCtx *ProxyChannelContext) {
+func (ctx *UserConnContext) SetNextConnCtx(nextConnCtx *ProxyConnContext) {
 	ctx.mu.Lock()
-	ctx.nextChannelCtx = nextChannelCtx
+	ctx.nextConnCtx = nextConnCtx
 	ctx.mu.Unlock()
 }
 
-func (ctx *UserChannelContext) GetNextChannelCtx() *ProxyChannelContext {
+func (ctx *UserConnContext) GetNextConnCtx() *ProxyConnContext {
 	ctx.mu.RLock()
-	nextChannelCtx := ctx.nextChannelCtx
+	nextConnCtx := ctx.nextConnCtx
 	ctx.mu.RUnlock()
-	return nextChannelCtx
+	return nextConnCtx
 }
 
-func (ctx *UserChannelContext) SetConn(conn gnet.Conn) {
+func (ctx *UserConnContext) SetConn(conn gnet.Conn) {
 	ctx.mu.Lock()
 	ctx.conn = conn
 	ctx.mu.Unlock()
 }
 
-func (ctx *UserChannelContext) GetConn() gnet.Conn {
+func (ctx *UserConnContext) GetConn() gnet.Conn {
 	ctx.mu.RLock()
 	conn := ctx.conn
 	ctx.mu.RUnlock()
@@ -56,26 +57,27 @@ func (s *UserServer) Start() {
 	go func() {
 		err := gnet.Run(s, fmt.Sprintf("%s://%s", s.network, s.addr), gnet.WithMulticore(true), gnet.WithReusePort(true))
 		if err != nil {
-			log.Fatalf("start server error %v\n", err)
+			log.Fatalf("start server error %v", err)
 		}
 	}()
 }
 
 func (s *UserServer) OnBoot(eng gnet.Engine) (action gnet.Action) {
-	log.Printf("running user server on %s\n", fmt.Sprintf("%s://%s", s.network, s.addr))
+	lan := s.proxyServer.cfg.GetLan(s.port)
+	logging.Infof("running user server:%s, proxy: %s", fmt.Sprintf("%s://%s", s.network, s.addr), lan)
 	s.eng = eng
 	return
 }
 
 func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
-	log.Printf("user server on open")
-	ctx := &UserChannelContext{
+	logging.Infof("user server on open")
+	ctx := &UserConnContext{
 		conn: c,
 	}
 	c.SetContext(ctx)
-	cmdChannelCtx0, ok := s.proxyServer.portCmdChannelCtxMap.Load(s.port)
+	cmdConnCtx0, ok := s.proxyServer.portCmdConnCtxMap.Load(s.port)
 	if !ok {
-		log.Printf("port :%d bin channel not found", s.port)
+		logging.Infof("port :%d cmd conn not found", s.port)
 		action = gnet.Close
 		return
 	} else {
@@ -88,10 +90,10 @@ func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 		ctx.lan = lan
 		ctx.mu.Unlock()
 
-		cmdChannelCtx := cmdChannelCtx0.(*ProxyChannelContext)
-		cmdConn := cmdChannelCtx.GetConn()
-		log.Printf("user server on open, userId: %d, lan: %s\n", userId, lan)
-		cmdChannelCtx.userChannelCtxMap.Store(userId, ctx)
+		cmdConnCtx := cmdConnCtx0.(*ProxyConnContext)
+		cmdConn := cmdConnCtx.GetConn()
+		logging.Infof("user server on open, userId: %d, lan: %s", userId, lan)
+		cmdConnCtx.userConnCtxMap.Store(userId, ctx)
 		// TODO send proxy msg to proxy client, tell client there is a new connect into
 		pkt := NewConnectPacket(userId, lan)
 		buf := Encode(pkt)
@@ -101,18 +103,18 @@ func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 }
 
 func (s *UserServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
-	log.Printf("user server on traffic")
-	ctx := c.Context().(*UserChannelContext)
+	logging.Infof("user server on traffic")
+	ctx := c.Context().(*UserConnContext)
 
-	nextChannelCtx := ctx.GetNextChannelCtx()
+	nextConnCtx := ctx.GetNextConnCtx()
 
-	nextConn := nextChannelCtx.GetConn()
+	nextConn := nextConnCtx.GetConn()
 
-	log.Println("read msg from user client")
+	logging.Infof("read msg from user client")
 
 	if nextConn == nil {
 		action = gnet.Close
-		log.Println("next channel is nil")
+		logging.Warnf("next conn is nil")
 		return
 	} else {
 		for {
@@ -124,46 +126,46 @@ func (s *UserServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 			buf := make([]byte, n)
 			_, err := c.Read(buf)
 			if err != nil {
-				log.Printf("read from user channel error: %v\n", err)
+				logging.Infof("read from user conn error: %v", err)
 				return gnet.Close
 			}
 			pkt := NewDataPacket(buf)
 			msg := Encode(pkt)
 			err = nextConn.AsyncWrite(msg, nil)
 			if err != nil {
-				log.Printf("write to proxy channel error: %v\n", err)
+				logging.Infof("write to proxy conn error: %v", err)
 				return gnet.Close
 			}
-			log.Println("write data packet to proxy channel success")
+			logging.Infof("write data packet to proxy conn success")
 		}
 	}
 	return
 }
 
 func (s *UserServer) OnClose(c gnet.Conn, err error) (action gnet.Action) {
-	ctx := c.Context().(*UserChannelContext)
+	ctx := c.Context().(*UserConnContext)
 	userId := ctx.userId
 	// lan := ctx.lan
-	cmdChannelCtx0, ok := s.proxyServer.portCmdChannelCtxMap.Load(s.port)
+	cmdConnCtx0, ok := s.proxyServer.portCmdConnCtxMap.Load(s.port)
 	if !ok {
-		log.Printf("port :%d bin channel not found", s.port)
+		logging.Infof("port :%d bin conn not found", s.port)
 		action = gnet.Close
 		return
 	} else {
-		cmdChannelCtx := cmdChannelCtx0.(*ProxyChannelContext)
+		cmdConnCtx := cmdConnCtx0.(*ProxyConnContext)
 
-		cmdChannelCtx.userChannelCtxMap.Delete(userId)
-		proxyChannelCtx := ctx.GetNextChannelCtx()
-		if proxyChannelCtx != nil {
-			proxyConn := proxyChannelCtx.GetConn()
-			// do not close the channel
-			proxyChannelCtx.mu.Lock()
+		cmdConnCtx.userConnCtxMap.Delete(userId)
+		proxyConnCtx := ctx.GetNextConnCtx()
+		if proxyConnCtx != nil {
+			proxyConn := proxyConnCtx.GetConn()
+			// do not close conn
+			proxyConnCtx.mu.Lock()
 			// reset some attributes
-			proxyChannelCtx.nextChannelCtx = nil
-			proxyChannelCtx.clientId = ""
-			proxyChannelCtx.channelType = -1
-			proxyChannelCtx.userId = 0
-			proxyChannelCtx.mu.Unlock()
+			proxyConnCtx.nextConnCtx = nil
+			proxyConnCtx.clientId = ""
+			proxyConnCtx.connType = -1
+			proxyConnCtx.userId = 0
+			proxyConnCtx.mu.Unlock()
 
 			pkt := NewDisconnectPacket(userId)
 			buf := Encode(pkt)
