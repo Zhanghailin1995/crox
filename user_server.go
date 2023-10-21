@@ -1,6 +1,7 @@
 package crox
 
 import (
+	"context"
 	"crox/pkg/logging"
 	"fmt"
 	"github.com/panjf2000/gnet/v2"
@@ -90,6 +91,11 @@ func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 	} else {
 		userId := NewUserId()
 		lan := s.proxyServer.cfg.GetLan(s.port)
+		if lan == "" {
+			logging.Errorf("can not found lan info, port: %d", s.port)
+			action = gnet.Close
+			return
+		}
 
 		ctx.mu.Lock()
 		ctx.userId = userId
@@ -174,6 +180,10 @@ func (s *UserServer) OnClose(c gnet.Conn, err error) (action gnet.Action) {
 		}
 	}
 	return
+}
+
+func (s *UserServer) Shutdown() {
+	_ = s.eng.Stop(context.Background())
 }
 
 var UserId uint64 = 1

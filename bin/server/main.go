@@ -7,6 +7,6 @@ import (
 
 func main() {
 	logging.DefaultLogger()
-	bootServer := &crox.ServerBootstrap{}
+	bootServer := &crox.ProxyServerBootstrap{}
 	bootServer.Boot()
 }
