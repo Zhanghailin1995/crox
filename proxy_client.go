@@ -68,10 +68,10 @@ func (client *ProxyClient) PollProxyConn(cb PollProxyConnCallback) {
 					conn: proxyConn,
 				}
 				// hack method we should call SetContext() in EventHandle
-				_ = proxyConn.Wake(func(c gnet.Conn, err error) error {
-					c.SetContext(proxyConnCtx)
-					return nil
-				})
+				//_ = proxyConn.Wake(func(c gnet.Conn, err error) error {
+				//	c.SetContext(proxyConnCtx)
+				//	return nil
+				//})
 				cb(proxyConnCtx, nil)
 			}
 		}()
@@ -222,6 +222,7 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 			buf := Encode(connectPkt)
 			_ = clientProxyConn.AsyncWrite(buf, func(c gnet.Conn, err error) error {
 				logging.Infof("userId: %d write connect packet to proxy server success", userId)
+				c.SetContext(clientProxyConnCtx)
 				return nil
 			})
 

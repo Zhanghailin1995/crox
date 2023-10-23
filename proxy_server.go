@@ -189,7 +189,13 @@ func (s *ProxyServer) handleConnectMsg(_ gnet.Conn, ctx *ProxyConnContext, pkt *
 
 		userConnCtx.mu.Lock()
 		userConnCtx.nextConnCtx = ctx
+		userConn := userConnCtx.conn
 		userConnCtx.mu.Unlock()
+		err := userConn.Wake(nil)
+		if err != nil {
+			logging.Infof("wake user conn error %v", err)
+			_ = userConn.CloseWithCallback(nil)
+		}
 	} else {
 		logging.Infof("user %d not found", userId)
 	}
@@ -198,7 +204,7 @@ func (s *ProxyServer) handleConnectMsg(_ gnet.Conn, ctx *ProxyConnContext, pkt *
 
 // |data|
 func (s *ProxyServer) handleDataMsg(_ gnet.Conn, ctx *ProxyConnContext, pkt *packet) gnet.Action {
-	logging.Infof("receive data msg from conn, conn type %d", ctx.connType)
+	logging.Infof("receive data msg from proxy client, conn type %d", ctx.connType)
 	data := pkt.Data
 	ctx.mu.RLock()
 	nextConnCtx := ctx.nextConnCtx

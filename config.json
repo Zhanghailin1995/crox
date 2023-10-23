@@ -5,7 +5,7 @@
     "proxyMappings": [
       {
         "inetPort": 8699,
-        "lan": "192.168.1.57:7399",
+        "lan": "192.168.1.134:81",
         "name": "ceshi"
       }
     ],

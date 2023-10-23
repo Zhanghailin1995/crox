@@ -116,6 +116,10 @@ func (s *UserServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	ctx := c.Context().(*UserConnContext)
 	userId := ctx.GetUserId()
 	nextConnCtx := ctx.GetNextConnCtx()
+	if nextConnCtx == nil {
+		logging.Warnf("read from user conn, userId: %d, but next conn is nil", userId)
+		return
+	}
 	nextConn := nextConnCtx.GetConn()
 
 	if nextConn == nil {
@@ -142,7 +146,7 @@ func (s *UserServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 				logging.Errorf("user id: %d, write to next conn error: %v", userId, err)
 				return gnet.Close
 			}
-			logging.Debugf("user id: %d, write data packet to next conn success")
+			logging.Debugf("user id: %d, write data packet to next conn success", userId)
 		}
 	}
 	return
