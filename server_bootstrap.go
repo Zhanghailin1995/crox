@@ -3,7 +3,10 @@ package crox
 import (
 	"context"
 	"crox/pkg/logging"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io/ioutil"
 	"sync"
 )
 
@@ -15,6 +18,8 @@ type ProxyServerBootstrap struct {
 	shutdownCtx context.Context
 	mu          sync.Mutex
 }
+
+var ErrPortAlreadyBind = errors.New("port already bind")
 
 func (boot *ProxyServerBootstrap) Boot() {
 	shutdownCtx, cancel := context.WithCancel(context.Background())
@@ -94,14 +99,15 @@ func (boot *ProxyServerBootstrap) UpdateConfig() {
 	boot.cfg.mu.RUnlock()
 
 	// 3. 更新配置
-	boot.cfg.mu.Lock()
-	defer boot.cfg.mu.Unlock()
 
-	boot.mu.Lock()
+	boot.cfg.mu.Lock()
 	boot.cfg.lanInfo = newLanInfo
 	boot.cfg.clientInetPortMapping = newClientInetPortMapping
 	boot.cfg.rawConfigs = newConfigs
-	boot.mu.Unlock()
+	boot.cfg.mu.Unlock()
+
+	boot.mu.Lock()
+	defer boot.mu.Unlock()
 
 	for _, port := range add {
 		userServer := &UserServer{
@@ -122,4 +128,61 @@ func (boot *ProxyServerBootstrap) UpdateConfig() {
 		}
 	}
 
+}
+
+func (boot *ProxyServerBootstrap) AddClient(clientId string, clientName string) error {
+	boot.cfg.mu.Lock()
+	defer boot.cfg.mu.Unlock()
+	boot.cfg.clientInetPortMapping[clientId] = []uint32{}
+	boot.cfg.rawConfigs = append(boot.cfg.rawConfigs, Config{
+		ClientKey:     clientId,
+		Name:          clientName,
+		ProxyMappings: []ProxyMapping{},
+	})
+	content, err := json.Marshal(boot.cfg.rawConfigs)
+	if err != nil {
+		return err
+	}
+	return ioutil.WriteFile(boot.cfgFilePath, content, 0644)
+}
+
+func (boot *ProxyServerBootstrap) AddProxy(clientId string, proxy *ProxyMapping) error {
+	boot.cfg.mu.Lock()
+	_, ok := boot.cfg.lanInfo[uint32(proxy.InetPort)]
+	if ok {
+		boot.cfg.mu.Unlock()
+		return ErrPortAlreadyBind
+	}
+	boot.cfg.lanInfo[uint32(proxy.InetPort)] = proxy.Lan
+	boot.cfg.clientInetPortMapping[clientId] = append(boot.cfg.clientInetPortMapping[clientId], uint32(proxy.InetPort))
+	var cfgs []Config
+	for _, cfg := range boot.cfg.rawConfigs {
+		if cfg.ClientKey == clientId {
+			cfg.ProxyMappings = append(cfg.ProxyMappings, *proxy)
+		}
+		cfgs = append(cfgs, cfg)
+	}
+	boot.cfg.rawConfigs = cfgs
+	content, err := json.Marshal(boot.cfg.rawConfigs)
+	if err != nil {
+		return err
+	}
+	err = ioutil.WriteFile(boot.cfgFilePath, content, 0644)
+	if err != nil {
+		return err
+	}
+	boot.cfg.mu.Unlock()
+
+	boot.mu.Lock()
+	defer boot.mu.Unlock()
+
+	userServer := &UserServer{
+		network:     "tcp",
+		addr:        fmt.Sprintf(":%d", proxy.InetPort),
+		port:        uint32(proxy.InetPort),
+		proxyServer: boot.proxyServer,
+	}
+	userServer.Start()
+	boot.userServers.Store(uint32(proxy.InetPort), userServer)
+	return nil
 }

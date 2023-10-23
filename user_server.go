@@ -5,7 +5,6 @@ import (
 	"crox/pkg/logging"
 	"fmt"
 	"github.com/panjf2000/gnet/v2"
-	"log"
 	"sync"
 	"sync/atomic"
 )
@@ -65,7 +64,7 @@ func (s *UserServer) Start() {
 	go func() {
 		err := gnet.Run(s, fmt.Sprintf("%s://%s", s.network, s.addr), gnet.WithMulticore(true), gnet.WithReusePort(true))
 		if err != nil {
-			log.Fatalf("start server error %v", err)
+			logging.Errorf("start server: %s://%s error: %v", s.network, s.addr, err)
 		}
 	}()
 }
