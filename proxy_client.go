@@ -3,6 +3,7 @@ package crox
 import (
 	"container/list"
 	"crox/pkg/logging"
+	"crox/pkg/util"
 	"encoding/binary"
 	"github.com/panjf2000/gnet/v2"
 	"sync"
@@ -11,8 +12,10 @@ import (
 )
 
 type ClientProxyConnContext struct {
+	ctxId        string
 	conn         gnet.Conn
 	lastReadTime int64
+	heartbeatSeq uint64
 	nextConnCtx  *RealServerConnContext
 	mu           sync.RWMutex
 }
@@ -65,7 +68,10 @@ func (client *ProxyClient) PollProxyConn(cb PollProxyConnCallback) {
 				return
 			} else {
 				proxyConnCtx := &ClientProxyConnContext{
-					conn: proxyConn,
+					ctxId:        util.ContextId(),
+					conn:         proxyConn,
+					lastReadTime: 0,
+					heartbeatSeq: 0,
 				}
 				// hack method we should call SetContext() in EventHandle
 				//_ = proxyConn.Wake(func(c gnet.Conn, err error) error {
@@ -110,6 +116,7 @@ func (client *ProxyClient) OnBoot(eng gnet.Engine) (action gnet.Action) {
 
 func (client *ProxyClient) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 	ctx := &ClientProxyConnContext{
+		ctxId:        util.ContextId(),
 		conn:         c,
 		lastReadTime: 0,
 	}
@@ -199,6 +206,7 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 			return
 		}
 		realServerConnCtx := &RealServerConnContext{
+			ctxId:  util.ContextId(),
 			userId: userId,
 			conn:   realConn,
 		}
@@ -223,6 +231,7 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 			_ = clientProxyConn.AsyncWrite(buf, func(c gnet.Conn, err error) error {
 				logging.Infof("userId: %d write connect packet to proxy server success", userId)
 				c.SetContext(clientProxyConnCtx)
+				go startSendHeartbeat(clientProxyConnCtx)
 				return nil
 			})
 
@@ -286,4 +295,21 @@ func (client *ProxyClient) handleDisconnectMsg(_ gnet.Conn, ctx *ClientProxyConn
 		client.OfferProxyConn(ctx)
 	}
 	return
+}
+
+func startSendHeartbeat(ctx *ClientProxyConnContext) {
+	writeTicker := time.NewTicker(10 * time.Second)
+	for {
+		select {
+		case <-writeTicker.C:
+			// 发送心跳包
+			heartbeatPacket := NewHeartbeatPacket(atomic.AddUint64(&ctx.heartbeatSeq, 1))
+			buf := Encode(heartbeatPacket)
+			err := ctx.GetConn().AsyncWrite(buf, nil)
+			if err != nil {
+				logging.Infof("write heartbeat packet error %v", err)
+				return
+			}
+		}
+	}
 }

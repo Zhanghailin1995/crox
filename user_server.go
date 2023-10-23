@@ -3,6 +3,7 @@ package crox
 import (
 	"context"
 	"crox/pkg/logging"
+	"crox/pkg/util"
 	"fmt"
 	"github.com/panjf2000/gnet/v2"
 	"sync"
@@ -10,6 +11,7 @@ import (
 )
 
 type UserConnContext struct {
+	ctxId       string
 	conn        gnet.Conn         // user conn
 	userId      uint64            // 用户id
 	lan         string            // 需要代理的本地内网地址
@@ -61,10 +63,11 @@ type UserServer struct {
 }
 
 func (s *UserServer) Start() {
+	network, addr := s.network, s.addr
 	go func() {
-		err := gnet.Run(s, fmt.Sprintf("%s://%s", s.network, s.addr), gnet.WithMulticore(true), gnet.WithReusePort(true))
+		err := gnet.Run(s, fmt.Sprintf("%s://%s", network, addr), gnet.WithMulticore(true), gnet.WithReusePort(true))
 		if err != nil {
-			logging.Errorf("start server: %s://%s error: %v", s.network, s.addr, err)
+			logging.Errorf("start server: %s://%s error: %v", network, addr, err)
 		}
 	}()
 }
@@ -79,7 +82,8 @@ func (s *UserServer) OnBoot(eng gnet.Engine) (action gnet.Action) {
 func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 	logging.Infof("user server: %s://%s accept a new conn: %s", s.network, s.addr, c.RemoteAddr())
 	ctx := &UserConnContext{
-		conn: c,
+		ctxId: util.ContextId(),
+		conn:  c,
 	}
 	c.SetContext(ctx)
 	cmdConnCtx0, ok := s.proxyServer.portCmdConnCtxMap.Load(s.port)

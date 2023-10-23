@@ -3,6 +3,7 @@ package crox
 import (
 	"context"
 	"crox/pkg/logging"
+	"crox/pkg/util"
 	"encoding/binary"
 	"fmt"
 	"github.com/panjf2000/gnet/v2"
@@ -15,6 +16,7 @@ import (
 
 // ProxyConnContext cmdConn和transferConn共用同一个ConnContext类型，因为他们都是连接同一个server的相同端口，只是传输的数据不一样
 type ProxyConnContext struct {
+	ctxId          string
 	connType       int // 0: cmdConn, 1: transferConn
 	conn           gnet.Conn
 	lastReadTime   int64
@@ -65,8 +67,9 @@ type ProxyServer struct {
 }
 
 func (s *ProxyServer) Start(cancelFunc context.CancelFunc) {
+	network, addr := s.network, s.addr
 	go func() {
-		err := gnet.Run(s, fmt.Sprintf("%s://%s", s.network, s.addr), gnet.WithMulticore(true), gnet.WithReusePort(true))
+		err := gnet.Run(s, fmt.Sprintf("%s://%s", network, addr), gnet.WithMulticore(true), gnet.WithReusePort(true))
 		if err != nil {
 			cancelFunc()
 			log.Fatalf("start server error %v", err)
@@ -84,6 +87,7 @@ func (s *ProxyServer) OnBoot(eng gnet.Engine) (action gnet.Action) {
 func (s *ProxyServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 	atomic.AddInt32(&s.connected, 1)
 	ctx := &ProxyConnContext{
+		ctxId:        util.ContextId(),
 		connType:     -1, // 为定义的connType
 		conn:         c,
 		lastReadTime: time.Now().UnixMilli(),
@@ -92,12 +96,12 @@ func (s *ProxyServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 	}
 	c.SetContext(ctx)
 	// start heartbeat check
+	go startHeartbeatCheck(ctx)
 	return
 }
 
 func (s *ProxyServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	ctx := c.Context().(*ProxyConnContext)
-	atomic.StoreInt64(&ctx.lastReadTime, time.Now().UnixMilli())
 	for {
 		pkt, err := Decode(c)
 		if err == ErrIncompletePacket {
@@ -106,6 +110,7 @@ func (s *ProxyServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 			logging.Infof("invalid packet: %v", err)
 			return gnet.Close
 		}
+		atomic.StoreInt64(&ctx.lastReadTime, time.Now().UnixMilli())
 		switch pkt.Type {
 		case PktTypeAuth:
 			action = s.handleAuthMsg(c, ctx, pkt)
@@ -225,10 +230,10 @@ func (s *ProxyServer) handleDataMsg(_ gnet.Conn, ctx *ProxyConnContext, pkt *pac
 }
 
 // |seq:8|
-func (s *ProxyServer) handleHeartbeatMsg(c gnet.Conn, _ *ProxyConnContext, pkt *packet) gnet.Action {
+func (s *ProxyServer) handleHeartbeatMsg(c gnet.Conn, ctx *ProxyConnContext, pkt *packet) gnet.Action {
 	data := pkt.Data
 	seq := binary.LittleEndian.Uint64(data)
-	logging.Infof("receive heartbeat seq %d", seq)
+	logging.Debugf("receive heartbeat from: %s, seq: %d", ctx.ctxId, seq)
 	heartbeatPacket := NewHeartbeatPacket(seq)
 	buf := Encode(heartbeatPacket)
 	_, err := c.Write(buf)
@@ -319,24 +324,7 @@ func startHeartbeatCheck(ctx *ProxyConnContext) {
 			// 检查ctx.lastReadTime是否超过一定时间，如果超过一定时间，就断开连接
 			if time.Now().UnixMilli()-lastReadTime > 30*1000 {
 				logging.Infof("heartbeat check timeout, last read time %d", lastReadTime)
-				_ = ctx.conn.CloseWithCallback(nil)
-				return
-			}
-		}
-	}
-}
-
-func startSendHeartbeat(ctx *ProxyConnContext) {
-	writeTicker := time.NewTicker(10 * time.Second)
-	for {
-		select {
-		case <-writeTicker.C:
-			// 发送心跳包
-			heartbeatPacket := NewHeartbeatPacket(atomic.AddUint64(&ctx.heartbeatSeq, 1))
-			buf := Encode(heartbeatPacket)
-			err := ctx.conn.AsyncWrite(buf, nil)
-			if err != nil {
-				logging.Infof("write heartbeat packet error %v", err)
+				_ = ctx.GetConn().CloseWithCallback(nil)
 				return
 			}
 		}

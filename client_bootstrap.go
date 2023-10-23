@@ -4,6 +4,7 @@ import (
 	"container/list"
 	"context"
 	"crox/pkg/logging"
+	"crox/pkg/util"
 	"github.com/panjf2000/gnet/v2"
 )
 
@@ -34,8 +35,10 @@ func (boot *ClientBootstrap) Boot(clientId string, proxyAddr string) {
 	}
 	logging.Infof("connect proxy server %s success", proxyAddr)
 	cmdConnCtx := &ClientProxyConnContext{
+		ctxId:        util.ContextId(),
 		conn:         cmdConn,
 		lastReadTime: 0,
+		heartbeatSeq: 0,
 	}
 	proxyClient.cmdConnCtx = cmdConnCtx
 
@@ -62,6 +65,7 @@ func (boot *ClientBootstrap) Boot(clientId string, proxyAddr string) {
 			return nil
 		}
 		c.SetContext(cmdConnCtx)
+		go startSendHeartbeat(cmdConnCtx)
 		return nil
 	})
 

@@ -7,6 +7,7 @@ import (
 )
 
 type RealServerConnContext struct {
+	ctxId       string
 	userId      uint64
 	conn        gnet.Conn
 	nextConnCtx *ClientProxyConnContext
