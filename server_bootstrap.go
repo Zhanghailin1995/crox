@@ -11,13 +11,19 @@ import (
 )
 
 type SvrBootstrap struct {
-	proxy *ProxyServerBootstrap
-	web   *WebServerBootstrap
+	Proxy *ProxyServerBootstrap
+	Web   *WebServerBootstrap
 }
 
 func (boot *SvrBootstrap) Boot() {
-	go boot.proxy.Boot()
-	boot.web.Boot()
+	p := &ProxyServerBootstrap{
+		cfgFilePath: "config.json",
+	}
+	w := &WebServerBootstrap{}
+	boot.Proxy = p
+	boot.Web = w
+	go boot.Proxy.Boot()
+	boot.Web.Boot()
 }
 
 type ProxyServerBootstrap struct {
@@ -39,7 +45,7 @@ func (boot *ProxyServerBootstrap) Boot() {
 	shutdownCtx, cancel := context.WithCancel(context.Background())
 	boot.shutdownCtx = shutdownCtx
 	// 1. load config
-	boot.cfg = LoadProxyConfig("config.json")
+	boot.cfg = LoadProxyConfig(boot.cfgFilePath)
 	// 2. start proxy server
 	proxyServer := &ProxyServer{
 		network: "tcp",
@@ -198,13 +204,18 @@ func (boot *ProxyServerBootstrap) AddProxy(clientId string, proxy *ProxyMapping)
 	}
 	userServer.Start()
 	boot.userServers.Store(uint32(proxy.InetPort), userServer)
+	cmdConnCtx0, ok := boot.proxyServer.cmdConnCtxMap.Load(clientId)
+	if ok {
+		cmdConnCtx := cmdConnCtx0.(*ProxyConnContext)
+		boot.proxyServer.portCmdConnCtxMap.Store(uint32(proxy.InetPort), cmdConnCtx)
+	}
 	return nil
 }
 
 func (boot *ProxyServerBootstrap) DeleteProxy(clientId string, port int) error {
 	boot.cfg.mu.Lock()
 	_, ok := boot.cfg.lanInfo[uint32(port)]
-	if ok {
+	if !ok {
 		boot.cfg.mu.Unlock()
 		return ErrProxyPortNotOpen
 	}
@@ -252,5 +263,6 @@ func (boot *ProxyServerBootstrap) DeleteProxy(clientId string, port int) error {
 	userSvr := userSvr0.(*UserServer)
 	userSvr.Shutdown()
 	boot.userServers.Delete(uint32(port))
+	boot.proxyServer.portCmdConnCtxMap.Delete(uint32(port))
 	return nil
 }

@@ -162,7 +162,7 @@ func (s *UserServer) OnClose(c gnet.Conn, err error) (action gnet.Action) {
 	// lan := ctx.lan
 	cmdConnCtx0, ok := s.proxyServer.portCmdConnCtxMap.Load(s.port)
 	if !ok {
-		logging.Infof("port :%d bin conn not found", s.port)
+		logging.Infof("port :%d conn not found", s.port)
 		action = gnet.Close
 		return
 	} else {
@@ -190,6 +190,7 @@ func (s *UserServer) OnClose(c gnet.Conn, err error) (action gnet.Action) {
 }
 
 func (s *UserServer) Shutdown() {
+	logging.Infof("shutdown user server: %s://%s", s.network, s.addr)
 	_ = s.eng.Stop(context.Background())
 }
 

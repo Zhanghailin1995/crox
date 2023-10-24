@@ -238,7 +238,6 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 				logging.Infof("userId: %d write connect packet to proxy server success", userId)
 				c.SetContext(clientProxyConnCtx)
 				go startSendHeartbeat(clientProxyConnCtx)
-				go startServerHeartbeatCheck(clientProxyConnCtx)
 				return nil
 			})
 

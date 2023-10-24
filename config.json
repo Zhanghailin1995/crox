@@ -1,14 +1,1 @@
-[
-  {
-    "name": "测试客户端",
-    "clientKey": "6389d977db7f4227bf7e04b2d3305d88",
-    "proxyMappings": [
-      {
-        "inetPort": 8699,
-        "lan": "192.168.1.134:81",
-        "name": "ceshi"
-      }
-    ],
-    "status": 1
-  }
-]
+[{"name":"测试客户端","clientKey":"6389d977db7f4227bf7e04b2d3305d88","proxyMappings":[{"inetPort":8699,"lan":"192.168.1.134:81","name":"ceshi"}]}]
