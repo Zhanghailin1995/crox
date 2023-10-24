@@ -15,6 +15,9 @@ func InitRouter() *gin.Engine {
 	apiV1.Use(JWT())
 	{
 		apiV1.POST("/config/update", UpdateConfig)
+		apiV1.POST("/config/addClient", AddClient)
+		apiV1.POST("/config/addProxy", AddProxy)
+		apiV1.POST("/config/deleteProxy", DeleteProxy)
 	}
 	return r
 }

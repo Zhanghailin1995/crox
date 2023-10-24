@@ -10,6 +10,16 @@ import (
 	"sync"
 )
 
+type SvrBootstrap struct {
+	proxy *ProxyServerBootstrap
+	web   *WebServerBootstrap
+}
+
+func (boot *SvrBootstrap) Boot() {
+	go boot.proxy.Boot()
+	boot.web.Boot()
+}
+
 type ProxyServerBootstrap struct {
 	proxyServer *ProxyServer
 	cfgFilePath string
@@ -20,6 +30,10 @@ type ProxyServerBootstrap struct {
 }
 
 var ErrPortAlreadyBind = errors.New("port already bind")
+
+var ErrProxyPortNotOpen = errors.New("proxy port not open")
+
+var ErrUserProxySvrNotFound = errors.New("user proxy server not found")
 
 func (boot *ProxyServerBootstrap) Boot() {
 	shutdownCtx, cancel := context.WithCancel(context.Background())
@@ -184,5 +198,59 @@ func (boot *ProxyServerBootstrap) AddProxy(clientId string, proxy *ProxyMapping)
 	}
 	userServer.Start()
 	boot.userServers.Store(uint32(proxy.InetPort), userServer)
+	return nil
+}
+
+func (boot *ProxyServerBootstrap) DeleteProxy(clientId string, port int) error {
+	boot.cfg.mu.Lock()
+	_, ok := boot.cfg.lanInfo[uint32(port)]
+	if ok {
+		boot.cfg.mu.Unlock()
+		return ErrProxyPortNotOpen
+	}
+	delete(boot.cfg.lanInfo, uint32(port))
+	ports := boot.cfg.clientInetPortMapping[clientId]
+	// remove port from ports
+	var newPorts []uint32
+	for _, p := range ports {
+		if p != uint32(port) {
+			newPorts = append(newPorts, p)
+		}
+	}
+	boot.cfg.clientInetPortMapping[clientId] = newPorts
+	var cfgs []Config
+
+	for _, cfg := range boot.cfg.rawConfigs {
+		if cfg.ClientKey == clientId {
+			var newMappings []ProxyMapping
+			for _, mapping := range cfg.ProxyMappings {
+				if mapping.InetPort != port {
+					newMappings = append(newMappings, mapping)
+				}
+			}
+			cfg.ProxyMappings = newMappings
+		}
+		cfgs = append(cfgs, cfg)
+	}
+	boot.cfg.rawConfigs = cfgs
+	content, err := json.Marshal(boot.cfg.rawConfigs)
+	if err != nil {
+		return err
+	}
+	err = ioutil.WriteFile(boot.cfgFilePath, content, 0644)
+	if err != nil {
+		return err
+	}
+	boot.cfg.mu.Unlock()
+
+	boot.mu.Lock()
+	defer boot.mu.Unlock()
+	userSvr0, ok := boot.userServers.Load(uint32(port))
+	if !ok {
+		return ErrUserProxySvrNotFound
+	}
+	userSvr := userSvr0.(*UserServer)
+	userSvr.Shutdown()
+	boot.userServers.Delete(uint32(port))
 	return nil
 }
