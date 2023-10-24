@@ -233,7 +233,7 @@ func (s *ProxyServer) handleDataMsg(_ gnet.Conn, ctx *ProxyConnContext, pkt *pac
 func (s *ProxyServer) handleHeartbeatMsg(c gnet.Conn, ctx *ProxyConnContext, pkt *packet) gnet.Action {
 	data := pkt.Data
 	seq := binary.LittleEndian.Uint64(data)
-	logging.Debugf("receive heartbeat from: %s, seq: %d", ctx.ctxId, seq)
+	logging.Debugf("receive heartbeat from client: %s, seq: %d", ctx.ctxId, seq)
 	heartbeatPacket := NewHeartbeatPacket(seq)
 	buf := Encode(heartbeatPacket)
 	_, err := c.Write(buf)

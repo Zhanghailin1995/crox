@@ -155,7 +155,7 @@ func (client *ProxyClient) OnClose(c gnet.Conn, err error) (action gnet.Action) 
 
 func (client *ProxyClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	ctx := c.Context().(*ClientProxyConnContext)
-	atomic.StoreInt64(&ctx.lastReadTime, time.Now().UnixMilli())
+
 	for {
 		pkt, err := Decode(c)
 		if err == ErrIncompletePacket {
@@ -164,6 +164,7 @@ func (client *ProxyClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
 			logging.Infof("invalid packet: %v", err)
 			return gnet.Close
 		}
+		atomic.StoreInt64(&ctx.lastReadTime, time.Now().UnixMilli())
 		switch pkt.Type {
 		case PktTypeConnect:
 			action = client.handleConnectMsg(c, ctx, pkt)
@@ -177,6 +178,11 @@ func (client *ProxyClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
 			}
 		case PktTypeDisconnect:
 			action = client.handleDisconnectMsg(c, ctx, pkt)
+			if action != gnet.None {
+				return
+			}
+		case PktTypeHeartbeat:
+			action = client.handleHeartbeatMsg(c, ctx, pkt)
 			if action != gnet.None {
 				return
 			}
@@ -232,6 +238,7 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 				logging.Infof("userId: %d write connect packet to proxy server success", userId)
 				c.SetContext(clientProxyConnCtx)
 				go startSendHeartbeat(clientProxyConnCtx)
+				go startServerHeartbeatCheck(clientProxyConnCtx)
 				return nil
 			})
 
@@ -295,6 +302,31 @@ func (client *ProxyClient) handleDisconnectMsg(_ gnet.Conn, ctx *ClientProxyConn
 		client.OfferProxyConn(ctx)
 	}
 	return
+}
+
+func (client *ProxyClient) handleHeartbeatMsg(_ gnet.Conn, ctx *ClientProxyConnContext, pkt *packet) (action gnet.Action) {
+	data := pkt.Data
+	seq := binary.LittleEndian.Uint64(data)
+	logging.Debugf("receive heartbeat from server: %s, seq: %d", ctx.ctxId, seq)
+	return gnet.None
+}
+
+func startServerHeartbeatCheck(ctx *ClientProxyConnContext) {
+	// 每隔一段时间检查一下心跳包的状态，如果超过一定时间没有收到心跳包，就断开连接
+	readTicker := time.NewTicker(10 * time.Second)
+	for {
+		select {
+		case <-readTicker.C:
+			// load ctx.lastReadTime
+			lastReadTime := atomic.LoadInt64(&ctx.lastReadTime)
+			// 检查ctx.lastReadTime是否超过一定时间，如果超过一定时间，就断开连接
+			if time.Now().UnixMilli()-lastReadTime > 30*1000 {
+				logging.Infof("heartbeat check timeout, last read time %d", lastReadTime)
+				_ = ctx.GetConn().CloseWithCallback(nil)
+				return
+			}
+		}
+	}
 }
 
 func startSendHeartbeat(ctx *ClientProxyConnContext) {
