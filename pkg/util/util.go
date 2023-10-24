@@ -15,7 +15,7 @@ import (
 var (
 	processId        = os.Getpid()
 	nextSeq   uint32 = 0
-	machineId        = GetMacAddress()
+	machineId        = getMacAddress()
 )
 
 const (
@@ -25,7 +25,7 @@ const (
 	randomLen    = 4
 )
 
-func GetMacAddress() []byte {
+func getMacAddress() []byte {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		panic(err)

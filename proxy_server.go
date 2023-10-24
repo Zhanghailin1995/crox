@@ -103,7 +103,7 @@ func (s *ProxyServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 func (s *ProxyServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	ctx := c.Context().(*ProxyConnContext)
 	for {
-		pkt, err := Decode(c)
+		pkt, err := decode(c)
 		if err == ErrIncompletePacket {
 			break
 		} else if err == ErrInvalidMagicNumber {
@@ -234,7 +234,7 @@ func (s *ProxyServer) handleHeartbeatMsg(c gnet.Conn, ctx *ProxyConnContext, pkt
 	data := pkt.Data
 	seq := binary.LittleEndian.Uint64(data)
 	logging.Debugf("receive heartbeat from client: %s, seq: %d", ctx.ctxId, seq)
-	heartbeatPacket := NewHeartbeatPacket(seq)
+	heartbeatPacket := newHeartbeatPacket(seq)
 	buf := Encode(heartbeatPacket)
 	_, err := c.Write(buf)
 	if err != nil {

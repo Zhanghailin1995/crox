@@ -27,7 +27,7 @@ type packet struct {
 	Data    []byte
 }
 
-func Decode(c gnet.Conn) (*packet, error) {
+func decode(c gnet.Conn) (*packet, error) {
 	buf, _ := c.Peek(packetHeaderSize)
 	if len(buf) < packetHeaderSize {
 		return nil, ErrIncompletePacket
@@ -56,48 +56,48 @@ func Decode(c gnet.Conn) (*packet, error) {
 	return pkt, nil
 }
 
-func NewAuthPacket(clientId string) *packet {
+func newAuthPacket(clientId string) *packet {
 	data := []byte(clientId)
-	return NewPacket(PktTypeAuth, data)
+	return newPacket(PktTypeAuth, data)
 }
 
-func NewDataPacket(data []byte) *packet {
-	return NewPacket(PktTypeData, data)
+func newDataPacket(data []byte) *packet {
+	return newPacket(PktTypeData, data)
 }
 
-func NewHeartbeatPacket(seq uint64) *packet {
+func newHeartbeatPacket(seq uint64) *packet {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, seq)
-	return NewPacket(PktTypeHeartbeat, data)
+	return newPacket(PktTypeHeartbeat, data)
 }
 
-func NewProxyConnectPacket(userId uint64, clientId string) *packet {
+func newProxyConnectPacket(userId uint64, clientId string) *packet {
 	clientIdLen := len([]byte(clientId))
 	dataLen := 8 + 4 + clientIdLen
 	data := make([]byte, dataLen)
 	binary.LittleEndian.PutUint64(data, userId)
 	binary.LittleEndian.PutUint32(data[8:], uint32(clientIdLen))
 	copy(data[12:], clientId)
-	return NewPacket(PktTypeConnect, data)
+	return newPacket(PktTypeConnect, data)
 }
 
-func NewConnectPacket(userId uint64, lan string) *packet {
+func newConnectPacket(userId uint64, lan string) *packet {
 	lanLen := len([]byte(lan))
 	dataLen := 8 + 4 + lanLen
 	data := make([]byte, dataLen)
 	binary.LittleEndian.PutUint64(data, userId)
 	binary.LittleEndian.PutUint32(data[8:], uint32(lanLen))
 	copy(data[12:], lan)
-	return NewPacket(PktTypeConnect, data)
+	return newPacket(PktTypeConnect, data)
 }
 
-func NewDisconnectPacket(userId uint64) *packet {
+func newDisconnectPacket(userId uint64) *packet {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, userId)
-	return NewPacket(PktTypeDisconnect, data)
+	return newPacket(PktTypeDisconnect, data)
 }
 
-func NewPacket(pktType uint8, data []byte) *packet {
+func newPacket(pktType uint8, data []byte) *packet {
 	var size uint32
 	if data == nil {
 		size = 0

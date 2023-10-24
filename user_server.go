@@ -109,7 +109,7 @@ func (s *UserServer) OnOpen(c gnet.Conn) (out []byte, action gnet.Action) {
 		cmdConn := cmdConnCtx.GetConn()
 		logging.Infof("user server on open, userId: %d, lan: %s", userId, lan)
 		cmdConnCtx.userConnCtxMap.Store(userId, ctx)
-		pkt := NewConnectPacket(userId, lan)
+		pkt := newConnectPacket(userId, lan)
 		buf := Encode(pkt)
 		_ = cmdConn.AsyncWrite(buf, nil)
 	}
@@ -143,7 +143,7 @@ func (s *UserServer) OnTraffic(c gnet.Conn) (action gnet.Action) {
 				logging.Errorf("read from user conn error, userId: %d, error: %v", userId, err)
 				return gnet.Close
 			}
-			pkt := NewDataPacket(buf)
+			pkt := newDataPacket(buf)
 			msg := Encode(pkt)
 			err = nextConn.AsyncWrite(msg, nil)
 			if err != nil {
@@ -181,7 +181,7 @@ func (s *UserServer) OnClose(c gnet.Conn, err error) (action gnet.Action) {
 			proxyConnCtx.userId = 0
 			proxyConnCtx.mu.Unlock()
 
-			pkt := NewDisconnectPacket(userId)
+			pkt := newDisconnectPacket(userId)
 			buf := Encode(pkt)
 			_ = proxyConn.AsyncWrite(buf, nil)
 		}

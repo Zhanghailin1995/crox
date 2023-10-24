@@ -78,7 +78,7 @@ func (client *RealServerClient) OnClose(c gnet.Conn, err error) (action gnet.Act
 			nextConnCtx.RemoveNextConnCtx(context)
 
 			ch := nextConnCtx.GetConn()
-			pkt := NewDisconnectPacket(context.GetUserId())
+			pkt := newDisconnectPacket(context.GetUserId())
 			buf := Encode(pkt)
 			writeErr := ch.AsyncWrite(buf, nil)
 			if writeErr != nil {
@@ -113,7 +113,7 @@ func (client *RealServerClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
 		if err != nil {
 			return gnet.Close
 		}
-		pkt := NewDataPacket(buf)
+		pkt := newDataPacket(buf)
 		buf = Encode(pkt)
 		err = nextConn.AsyncWrite(buf, nil)
 		if err != nil {

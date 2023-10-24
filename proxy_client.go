@@ -157,7 +157,7 @@ func (client *ProxyClient) OnTraffic(c gnet.Conn) (action gnet.Action) {
 	ctx := c.Context().(*ClientProxyConnContext)
 
 	for {
-		pkt, err := Decode(c)
+		pkt, err := decode(c)
 		if err == ErrIncompletePacket {
 			break
 		} else if err == ErrInvalidMagicNumber {
@@ -206,7 +206,7 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 		realConn, err := realServerCli.Dial(lan)
 		if err != nil {
 			logging.Infof("connect real server error: %v", err)
-			pkt := NewDisconnectPacket(userId)
+			pkt := newDisconnectPacket(userId)
 			buf := Encode(pkt)
 			_ = cmdConn.AsyncWrite(buf, nil)
 			return
@@ -220,7 +220,7 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 		client.PollProxyConn(func(clientProxyConnCtx *ClientProxyConnContext, err error) {
 			if err != nil {
 				logging.Infof("poll proxy conn error: %v", err)
-				disconnectPkt := NewDisconnectPacket(userId)
+				disconnectPkt := newDisconnectPacket(userId)
 				buf := Encode(disconnectPkt)
 				_ = cmdConn.AsyncWrite(buf, nil)
 				return
@@ -232,7 +232,7 @@ func (client *ProxyClient) handleConnectMsg(c gnet.Conn, _ *ClientProxyConnConte
 			clientProxyConnCtx.mu.Unlock()
 
 			// 发送给proxy server告诉他已经连上了real server
-			connectPkt := NewProxyConnectPacket(userId, clientId)
+			connectPkt := newProxyConnectPacket(userId, clientId)
 			buf := Encode(connectPkt)
 			_ = clientProxyConn.AsyncWrite(buf, func(c gnet.Conn, err error) error {
 				logging.Infof("userId: %d write connect packet to proxy server success", userId)
@@ -335,7 +335,7 @@ func startSendHeartbeat(ctx *ClientProxyConnContext) {
 		select {
 		case <-writeTicker.C:
 			// 发送心跳包
-			heartbeatPacket := NewHeartbeatPacket(atomic.AddUint64(&ctx.heartbeatSeq, 1))
+			heartbeatPacket := newHeartbeatPacket(atomic.AddUint64(&ctx.heartbeatSeq, 1))
 			buf := Encode(heartbeatPacket)
 			err := ctx.GetConn().AsyncWrite(buf, nil)
 			if err != nil {

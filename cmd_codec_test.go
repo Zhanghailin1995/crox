@@ -193,7 +193,7 @@ func TestDecode(t *testing.T) {
 	conn := &TestConn{
 		buffer: buf,
 	}
-	pkt, err := Decode(conn)
+	pkt, err := decode(conn)
 	// check err
 	if err != nil {
 		t.Errorf("err = %s, want nil", err)
@@ -218,7 +218,7 @@ func TestDecode(t *testing.T) {
 
 func TestNewTransferPacket(t *testing.T) {
 	data := []byte("transfer packet")
-	pkt := NewDataPacket(data)
+	pkt := newDataPacket(data)
 	// check pkt
 	if pkt.Magic != packetMagic {
 		t.Errorf("pkt.Magic = %d, want %d", pkt.Magic, packetMagic)
@@ -239,7 +239,7 @@ func TestNewTransferPacket(t *testing.T) {
 
 func TestNewHeartbeatPacket(t *testing.T) {
 	seq := uint64(1234567890)
-	pkt := NewHeartbeatPacket(seq)
+	pkt := newHeartbeatPacket(seq)
 	// check pkt
 	if pkt.Magic != packetMagic {
 		t.Errorf("pkt.Magic = %d, want %d", pkt.Magic, packetMagic)
@@ -261,7 +261,7 @@ func TestNewHeartbeatPacket(t *testing.T) {
 func TestNewConnectPacket(t *testing.T) {
 	userId := uint64(1234567890)
 	lan := "192.168.1.57:81"
-	pkt := NewConnectPacket(userId, lan)
+	pkt := newConnectPacket(userId, lan)
 	// check pkt
 	if pkt.Magic != packetMagic {
 		t.Errorf("pkt.Magic = %d, want %d", pkt.Magic, packetMagic)
@@ -289,7 +289,7 @@ func TestNewConnectPacket(t *testing.T) {
 func TestEncode(t *testing.T) {
 	userId := uint64(1234567890)
 	lan := "192.168.1.57:81"
-	pkt := NewConnectPacket(userId, lan)
+	pkt := newConnectPacket(userId, lan)
 	buf := Encode(pkt)
 	// check buf
 	if len(buf) != packetHeaderSize+int(pkt.Size) {

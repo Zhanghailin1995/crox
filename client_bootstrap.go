@@ -56,7 +56,7 @@ func (boot *ClientBootstrap) Boot(clientId string, proxyAddr string) {
 	proxyGnetCli.Start()
 	realServerGnetCli.Start()
 
-	authPkt := NewAuthPacket(clientId)
+	authPkt := newAuthPacket(clientId)
 	buf := Encode(authPkt)
 	cmdConn.AsyncWrite(buf, func(c gnet.Conn, err error) error {
 		if err != nil {
